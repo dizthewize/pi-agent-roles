@@ -119,6 +119,10 @@ const final = await pi_roles({ action: "result", handle });
 | `localization-engineer` | i18n, RTL, pluralization |
 | `ux-researcher` | User flows, friction points, mobile-first, competitive analysis |
 
+**Research & Intelligence:**
+| `scout` | Market intelligence: competitors, demand signals, whitespace |
+| `skeptic` | Adversarial reviewer: challenge claims, demand evidence, severity ratings |
+
 Load roles from the shipped `default-roles.json`:
 ```bash
 cp node_modules/pi-agent-roles/default-roles.json ~/.pi/agent/roles.json
