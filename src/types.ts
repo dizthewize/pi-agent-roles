@@ -22,7 +22,6 @@ export interface RoleDispatch {
   mode: "blocking" | "async";
   meshTarget?: string;      // NEW — send to mesh agent instead of running locally
   outputTo?: string;
-  meshTarget?: string;      // NEW — send to mesh agent
   chainAfter?: string; // v1.1
 }
 

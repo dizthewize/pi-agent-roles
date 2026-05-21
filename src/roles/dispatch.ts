@@ -6,10 +6,8 @@ import { buildContext } from "./context.js";
 import {
   generateHandle,
   nowISO,
-  durationMs,
   readJSON,
   writeJSON,
-  removeFile,
   mkdirpSync,
 } from "../utils.js";
 

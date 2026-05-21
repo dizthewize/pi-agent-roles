@@ -123,7 +123,7 @@ export default function piAgentRolesExtension(pi: ExtensionAPI) {
   });
 
   pi.events.on("roles:status:request", async (data) => {
-    const { requestId, params, responseChannel } = data as any;
+    const { params, responseChannel } = data as any;
     try {
       const rec = dispatcher.getStatus(params.handle);
       if (!rec) throw new Error(`Dispatch not found: ${params.handle}`);

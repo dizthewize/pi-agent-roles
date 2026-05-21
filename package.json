@@ -3,7 +3,17 @@
   "version": "0.1.0",
   "description": "Lightweight role-based delegation for Pi — define roles, dispatch tasks, get results",
   "type": "module",
+  "main": "./dist/extension/index.js",
+  "types": "./dist/extension/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/extension/index.d.ts",
+      "default": "./dist/extension/index.js"
+    }
+  },
   "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
     "test": "node --test --import jiti/register 'src/**/*.test.ts'",
     "test:all": "node --test --import jiti/register 'src/**/*.test.ts' 'test/**/*.test.ts'",
     "test:ci": "CI=true node --test --import jiti/register 'src/**/*.test.ts' 'test/**/*.test.ts'"
@@ -16,7 +26,8 @@
     "subagent"
   ],
   "files": [
-    "src/**/*.ts",
+    "dist/**/*",
+    "default-roles.json",
     "*.json",
     "README.md"
   ],
@@ -25,7 +36,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.19",
-    "jiti": "^2.7.0"
+    "jiti": "^2.7.0",
+    "typebox": "^1.1.38",
+    "typescript": "^5.9.3"
   },
   "license": "MIT"
 }
