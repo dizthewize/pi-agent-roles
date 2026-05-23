@@ -1,11 +1,10 @@
-import { describe, it } from "node:test";
-import assert from "node:assert";
 import { Dispatcher } from "./dispatch.js";
 import { RoleStore } from "./store.js";
 import { ExecuteBackend } from "./dispatch.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { describe, it, expect } from "vitest";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "dispatch-test-"));
@@ -38,9 +37,9 @@ describe("Dispatcher", () => {
     });
 
     const result = await d.dispatchBlocking("r", "task", [], mockBackend);
-    assert.strictEqual(result.status, "complete");
-    assert.strictEqual(result.exitCode, 0);
-    assert.ok(result.output!.includes("task"));
+    expect(result.status).toBe("complete");
+    expect(result.exitCode).toBe(0);
+    expect(result.output!.includes("task")).toBe(true);
   });
 
   it("dispatches async and returns handle immediately", async () => {
@@ -55,16 +54,16 @@ describe("Dispatcher", () => {
     });
 
     const { handle } = await d.dispatchAsync("r", "task", [], mockBackend);
-    assert.ok(handle.startsWith("d-"));
+    expect(handle.startsWith("d-")).toBe(true);
 
     // Immediately after returning, status is running
     const status = d.getStatus(handle);
-    assert.strictEqual(status?.status, "running");
+    expect(status?.status).toBe("running");
 
     // Wait for background to complete
     await new Promise((r) => setTimeout(r, 100));
     const final = d.getStatus(handle);
-    assert.strictEqual(final?.status, "complete");
+    expect(final?.status).toBe("complete");
   });
 
   it("handles timeout in blocking mode", async () => {
@@ -79,7 +78,7 @@ describe("Dispatcher", () => {
     });
 
     const result = await d.dispatchBlocking("r", "task", [], timeoutBackend);
-    assert.strictEqual(result.status, "timeout");
+    expect(result.status).toBe("timeout");
   });
 
   it("cancels a running dispatch", async () => {
@@ -94,10 +93,10 @@ describe("Dispatcher", () => {
     });
 
     const { handle } = await d.dispatchAsync("r", "slow", [], timeoutBackend);
-    assert.strictEqual(d.cancel(handle), true);
+    expect(d.cancel(handle)).toBe(true);
     const rec = d.getStatus(handle);
-    assert.strictEqual(rec?.status, "cancelled");
-    assert.strictEqual(d.cancel(handle), false); // already cancelled
+    expect(rec?.status).toBe("cancelled");
+    expect(d.cancel(handle)).toBe(false); // already cancelled
   });
 
   it("throws on unknown role", async () => {
@@ -109,9 +108,6 @@ describe("Dispatcher", () => {
       defaultTimeoutSeconds: 300,
     });
 
-    await assert.rejects(
-      async () => d.dispatchBlocking("ghost", "t", [], mockBackend),
-      /Role not found/
-    );
+    await expect(async () => d.dispatchBlocking("ghost", "t", [], mockBackend)).rejects.toThrow(/Role not found/);
   });
 });

@@ -160,7 +160,8 @@ export class Dispatcher {
     files: string[] | undefined,
     backend: ExecuteBackend,
     outputTo?: string,
-    meshTarget?: string
+    meshTarget?: string,
+    modelOverride?: string
   ): Promise<DispatchResult> {
     const role = this.store.get(roleId);
     if (!role) throw new Error(`Role not found: ${roleId}`);
@@ -214,7 +215,7 @@ Task: ${userPrompt}`,
           systemPrompt,
           task: userPrompt,
           context: role.context ?? "fork",
-          model: role.model,
+          model: (modelOverride && modelOverride !== "default") ? modelOverride : (role.model && role.model !== "default" ? role.model : undefined),
           skills: role.skills,
           timeoutSeconds: role.timeoutSeconds ?? this.defaultTimeout,
         }),
@@ -253,7 +254,8 @@ Task: ${userPrompt}`,
     files: string[] | undefined,
     backend: ExecuteBackend,
     outputTo?: string,
-    meshTarget?: string
+    meshTarget?: string,
+    modelOverride?: string
   ): Promise<{ handle: string }> {
     const role = this.store.get(roleId);
     if (!role) throw new Error(`Role not found: ${roleId}`);
@@ -312,7 +314,7 @@ Task: ${userPrompt}`,
           systemPrompt,
           task: userPrompt,
           context: role.context ?? "fork",
-          model: role.model,
+          model: (modelOverride && modelOverride !== "default") ? modelOverride : (role.model && role.model !== "default" ? role.model : undefined),
           skills: role.skills,
           timeoutSeconds: role.timeoutSeconds ?? this.defaultTimeout,
         }),

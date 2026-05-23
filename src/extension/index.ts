@@ -8,12 +8,92 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { spawn, execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+
+/**
+ * Read environment variables from the user's login shell.
+ * Pi may have been started before env vars were set; this ensures
+ * subprocesses get the same environment as a fresh terminal.
+ */
+function getShellEnv(): Record<string, string> {
+  try {
+    const shell = process.env.SHELL || "/bin/sh";
+    const output = execSync(`${shell} -lc 'env'`, { encoding: "utf-8", timeout: 5000 });
+    const env: Record<string, string> = {};
+    for (const line of output.split("\n")) {
+      const idx = line.indexOf("=");
+      if (idx > 0) {
+        env[line.slice(0, idx)] = line.slice(idx + 1);
+      }
+    }
+    return env;
+  } catch {
+    return {};
+  }
+}
+
+/** API key env vars that should be forwarded to subprocesses. */
+const API_KEY_VARS = [
+  "OPENCODE_API_KEY",
+  "OLLAMA_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_OAUTH_TOKEN",
+  "OPENAI_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "GEMINI_API_KEY",
+  "GROQ_API_KEY",
+  "MISTRAL_API_KEY",
+  "MOONSHOT_API_KEY",
+  "FIREWORKS_API_KEY",
+  "TOGETHER_API_KEY",
+  "XAI_API_KEY",
+  "AZURE_OPENAI_API_KEY",
+  "HF_TOKEN",
+  "CLOUDFLARE_API_KEY",
+];
+
+function buildSubprocessEnv(): NodeJS.ProcessEnv {
+  const shellEnv = getShellEnv();
+  const merged: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of API_KEY_VARS) {
+    const shellVal = shellEnv[key];
+    if (shellVal && shellVal.trim()) {
+      merged[key] = shellVal;
+    }
+  }
+  return merged;
+}
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { AgentRole, RoleAction, PiRolesParams, PiRolesResult, DispatchResult } from "../types.js";
 import { RoleStore } from "../roles/store.js";
 import { Dispatcher, ExecuteBackend } from "../roles/dispatch.js";
 import { buildFileContext, nowISO } from "../utils.js";
+
+function resolveSubagentModel(currentModel?: { id: string; provider?: string } | string): string | undefined {
+  const modelId = typeof currentModel === "string" ? currentModel : currentModel?.id;
+  if (!modelId || modelId === "default") return undefined;
+
+  // Already fully qualified (provider/model) — use as-is
+  if (modelId.includes("/")) return modelId;
+
+  // ollama-cloud is an extension provider; subprocesses won't load it.
+  // Map to the equivalent opencode-go proxy which uses the same backend.
+  if (modelId.startsWith("ollama-cloud/")) {
+    const name = modelId.replace("ollama-cloud/", "");
+    return `opencode-go/${name}`;
+  }
+
+  // Model ID is bare (e.g. "kimi-k2.6"). Pi stores provider separately.
+  // Prepend provider so subprocesses resolve unambiguously.
+  const provider = typeof currentModel === "string" ? undefined : currentModel?.provider;
+  if (provider) {
+    return `${provider}/${modelId}`;
+  }
+
+  return modelId;
+}
 
 const ROLES_FILE = path.join(os.homedir(), ".pi", "agent", "roles.json");
 const DISPATCHES_DIR = path.join(os.homedir(), ".pi", "agent", "dispatches");
@@ -34,11 +114,12 @@ const PiRolesSchema = Type.Object({
   tools: Type.Optional(Type.Array(Type.String())),
   timeoutSeconds: Type.Optional(Type.Number()),
   outputDir: Type.Optional(Type.String()),
-  context: Type.Optional(Type.StringEnum(["fresh", "fork"])),
+  context: Type.Optional(Type.String({ enum: ["fresh", "fork"] })),
   task: Type.Optional(Type.String()),
   files: Type.Optional(Type.Array(Type.String())),
-  mode: Type.Optional(Type.StringEnum(["blocking", "async"])),
+  mode: Type.Optional(Type.String({ enum: ["blocking", "async"] })),
   meshTarget: Type.Optional(Type.String()),
+  outputTo: Type.Optional(Type.String()),
   handle: Type.Optional(Type.String()),
 });
 
@@ -63,7 +144,7 @@ function makeBackend(pi: ExtensionAPI | any): ExecuteBackend {
           agent: "custom",
           config: {
             systemPrompt: params.systemPrompt,
-            model: params.model,
+            ...(params.model ? { model: params.model } : {}),
             inheritSkills: params.skills,
           },
           task: params.task,
@@ -79,15 +160,60 @@ function makeBackend(pi: ExtensionAPI | any): ExecuteBackend {
     };
   }
 
-  // Fallback: "execute" by returning the assembled prompt as
-  // the output, signalling the caller to run it manually.
+  // Fallback: spawn a subprocess via `pi` CLI so role tasks actually execute
+  // instead of returning steer text. Matches the pattern in pi-workflows runner.
+
   return {
     async run(params) {
-      return {
-        output: `\n--- ROLE SYSTEM PROMPT ---\n${params.systemPrompt}\n\n--- TASK ---\n${params.task}\n\n[Subagent API unavailable. Run the above prompt manually.]`,
-        exitCode: 0,
-        durationMs: 0,
-      };
+      const start = Date.now();
+      const args: string[] = ["--mode", "json", "-p", "--no-session"];
+      if (params.model) args.push("--model", params.model);
+      if (params.context) args.push("--context", params.context);
+
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-role-"));
+      const tmpPromptPath = path.join(tmpDir, `prompt-${randomUUID()}.md`);
+
+      const systemPrompt = (params.systemPrompt ?? "").trim();
+      if (systemPrompt) {
+        fs.writeFileSync(tmpPromptPath, systemPrompt, { encoding: "utf-8", mode: 0o600 });
+        args.push("--system-prompt", tmpPromptPath);
+      }
+
+      args.push(`Task: ${params.task}`);
+
+      return new Promise((resolve) => {
+        let rawOutput = "";
+        // DEBUG: log spawn args
+        const proc = spawn("pi", args, {
+          cwd: process.cwd(),
+          shell: false,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: buildSubprocessEnv(),
+        });
+
+        proc.stdout.on("data", (data: Buffer) => { rawOutput += data.toString(); });
+        proc.stderr.on("data", (data: Buffer) => { /* ignore stderr */ });
+
+        proc.on("close", (code) => {
+          if (systemPrompt) {
+            try { fs.unlinkSync(tmpPromptPath); } catch { /* ignore */ }
+            try { fs.rmdirSync(tmpDir); } catch { /* ignore */ }
+          }
+          resolve({
+            output: rawOutput,
+            exitCode: code ?? 0,
+            durationMs: Date.now() - start,
+          });
+        });
+
+        proc.on("error", () => {
+          resolve({
+            output: rawOutput,
+            exitCode: 1,
+            durationMs: Date.now() - start,
+          });
+        });
+      });
     },
   };
 }
@@ -105,15 +231,15 @@ export default function piAgentRolesExtension(pi: ExtensionAPI) {
   pi.events.on("roles:dispatch:request", async (data) => {
     const { requestId, params, responseChannel } = data as any;
     try {
-      const { roleId, task, mode, files } = params;
+      const { roleId, task, mode, files, model } = params;
       if (mode === "blocking") {
         const result = await dispatcher.dispatchBlocking(
-          roleId, task, files, backend, params.outputTo, params.meshTarget
+          roleId, task, files, backend, params.outputTo, params.meshTarget, resolveSubagentModel(model)
         );
         pi.events.emit(responseChannel, { success: true, result });
       } else {
         const { handle } = await dispatcher.dispatchAsync(
-          roleId, task, files, backend, params.outputTo, params.meshTarget
+          roleId, task, files, backend, params.outputTo, params.meshTarget, resolveSubagentModel(model)
         );
         pi.events.emit(responseChannel, { success: true, result: { handle } });
       }
@@ -154,6 +280,10 @@ Dispatch actions:
 
     async execute(_toolCallId, rawParams, _signal, _onUpdate, _ctx) {
       const params = rawParams as PiRolesType;
+      // Inject resolved model from current session if role dispatch lacks one
+      if (params.action === "dispatch" && !params.model && (_ctx as any).model?.id) {
+        params.model = resolveSubagentModel((_ctx as any).model);
+      }
       const result = await handleRoleAction(params, { store, dispatcher, backend });
       return {
         content: [
@@ -164,15 +294,6 @@ Dispatch actions:
         ],
         details: result,
       };
-    },
-
-    renderCall(args, theme) {
-      return `${theme.fg("toolTitle", "pi_roles")} ${theme.fg("accent", args.action)}`;
-    },
-
-    renderResult(result, _opts, theme) {
-      const status = result.isError ? theme.fg("error", "error") : theme.fg("success", "ok");
-      return `${theme.fg("toolTitle", "pi_roles")} ${status}`;
     },
   });
 
@@ -275,7 +396,8 @@ async function handleRoleAction(
             params.files,
             backend,
             params.outputTo,
-            params.meshTarget
+            params.meshTarget,
+            params.model
           );
           const meta = result.exitCode !== undefined ? ` [exit: ${result.exitCode}]` : "";
           const dur = result.durationMs ? ` (${Math.round(result.durationMs / 1000)}s)` : "";
@@ -291,7 +413,8 @@ async function handleRoleAction(
             params.files,
             backend,
             params.outputTo,
-            params.meshTarget
+            params.meshTarget,
+            params.model
           );
           return {
             status: "ok",

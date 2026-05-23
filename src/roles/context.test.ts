@@ -1,9 +1,8 @@
-import { describe, it } from "node:test";
-import assert from "node:assert";
 import { buildContext } from "./context.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { describe, it, expect } from "vitest";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ctx-test-"));
@@ -15,9 +14,9 @@ describe("buildContext", () => {
       { id: "a", name: "A", systemPrompt: "You are A" },
       "Do thing"
     );
-    assert.strictEqual(ctx.systemPrompt, "You are A");
-    assert.ok(ctx.userPrompt.includes("Do thing"));
-    assert.deepStrictEqual(ctx.resolvedFiles, []);
+    expect(ctx.systemPrompt).toBe("You are A");
+    expect(ctx.userPrompt.includes("Do thing")).toBe(true);
+    expect(ctx.resolvedFiles).toStrictEqual([]);
   });
 
   it("includes file contents", () => {
@@ -30,8 +29,8 @@ describe("buildContext", () => {
       "Do thing",
       [f]
     );
-    assert.ok(ctx.userPrompt.includes("hello.txt"));
-    assert.ok(ctx.userPrompt.includes("hello world"));
+    expect(ctx.userPrompt.includes("hello.txt")).toBe(true);
+    expect(ctx.userPrompt.includes("hello world")).toBe(true);
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 });
